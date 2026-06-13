@@ -172,12 +172,7 @@ func wireVersionToVersion(w wireVersion) Version {
 }
 
 func wireOwnerToOwner(w wireOwner) Owner {
-	return Owner{
-		Login: w.Login,
-		Name:  w.Name,
-		Kind:  w.Kind,
-		URL:   w.URL,
-	}
+	return Owner(w)
 }
 
 func wireDepToDep(w wireDep) Dep {
@@ -200,8 +195,5 @@ func wireCategoryToCategory(w wireCategory) Category {
 }
 
 func wireKeywordToKeyword(w wireKeyword) Keyword {
-	return Keyword{
-		Keyword:     w.Keyword,
-		CratesCount: w.CratesCount,
-	}
+	return Keyword(w)
 }
