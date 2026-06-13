@@ -1,0 +1,10 @@
+title       = "crates"
+baseURL     = "https://cratesio-cli.tamnd.com/"
+description = "Browse the crates.io Rust package registry"
+contentDir  = "content"
+outputDir   = "public"
+theme       = "tago-doks"
+syntaxHighlight = "true"
+
+[params]
+github = "https://github.com/tamnd/cratesio-cli"
