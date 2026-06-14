@@ -235,6 +235,68 @@ func TestTop(t *testing.T) {
 	}
 }
 
+func TestReverseDeps(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "/reverse_dependencies") {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{
+			"dependencies": [
+				{"crate_id":"serde_derive","req":"^1.0","kind":"normal","downloads":999000000},
+				{"crate_id":"serde_json","req":"^1.0","kind":"normal","downloads":876000000},
+				{"crate_id":"bincode","req":"^1.3","kind":"normal","downloads":123000000}
+			],
+			"meta":{"total":34567}
+		}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv)
+	rdeps, err := c.ReverseDeps(context.Background(), "serde", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rdeps) != 3 {
+		t.Fatalf("got %d reverse deps, want 3", len(rdeps))
+	}
+	if rdeps[0].Name != "serde_derive" {
+		t.Errorf("rdeps[0].Name = %q, want serde_derive", rdeps[0].Name)
+	}
+	if rdeps[0].Rank != 1 {
+		t.Errorf("rdeps[0].Rank = %d, want 1", rdeps[0].Rank)
+	}
+	if rdeps[0].Downloads != 999000000 {
+		t.Errorf("rdeps[0].Downloads = %d, want 999000000", rdeps[0].Downloads)
+	}
+	if rdeps[1].Name != "serde_json" {
+		t.Errorf("rdeps[1].Name = %q, want serde_json", rdeps[1].Name)
+	}
+}
+
+func TestReverseDepsLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"dependencies": [
+				{"crate_id":"a","req":"^1.0","kind":"normal","downloads":100},
+				{"crate_id":"b","req":"^1.0","kind":"normal","downloads":90},
+				{"crate_id":"c","req":"^1.0","kind":"normal","downloads":80}
+			],
+			"meta":{"total":3}
+		}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv)
+	rdeps, err := c.ReverseDeps(context.Background(), "foo", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rdeps) != 2 {
+		t.Errorf("got %d reverse deps, want 2 (limit applied)", len(rdeps))
+	}
+}
+
 func TestCategoriesAndKeywords(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/categories") {

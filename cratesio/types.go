@@ -42,6 +42,15 @@ type Dep struct {
 	Features string `json:"features"`
 }
 
+// ReverseDep is a crate that depends on a given crate (reverse dependency).
+type ReverseDep struct {
+	Rank      int    `json:"rank"`
+	Name      string `json:"name"`
+	Req       string `json:"req"`
+	Kind      string `json:"kind"`
+	Downloads int64  `json:"downloads"`
+}
+
 // Category is a record for a crates.io category.
 type Category struct {
 	Slug        string `json:"slug"`
@@ -130,6 +139,17 @@ type depsResp struct {
 	Dependencies []wireDep `json:"dependencies"`
 }
 
+type wireReverseDependency struct {
+	CrateID   string `json:"crate_id"`
+	Req       string `json:"req"`
+	Kind      string `json:"kind"`
+	Downloads int64  `json:"downloads"`
+}
+
+type reverseDepsResp struct {
+	Dependencies []wireReverseDependency `json:"dependencies"`
+}
+
 type categoriesResp struct {
 	Categories []wireCategory `json:"categories"`
 }
@@ -196,4 +216,14 @@ func wireCategoryToCategory(w wireCategory) Category {
 
 func wireKeywordToKeyword(w wireKeyword) Keyword {
 	return Keyword(w)
+}
+
+func wireReverseDep(w wireReverseDependency, rank int) ReverseDep {
+	return ReverseDep{
+		Rank:      rank,
+		Name:      w.CrateID,
+		Req:       w.Req,
+		Kind:      w.Kind,
+		Downloads: w.Downloads,
+	}
 }

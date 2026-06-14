@@ -257,6 +257,30 @@ func (c *Client) Deps(ctx context.Context, name string) ([]Dep, error) {
 	return deps, nil
 }
 
+// ReverseDeps returns crates that depend on the given crate (reverse dependencies).
+// limit controls the max results; 0 uses the API default (100).
+func (c *Client) ReverseDeps(ctx context.Context, name string, limit int) ([]ReverseDep, error) {
+	params := url.Values{}
+	pageSize := limit
+	if pageSize <= 0 || pageSize > 100 {
+		pageSize = 100
+	}
+	params.Set("per_page", fmt.Sprintf("%d", pageSize))
+	rawURL := c.base + "/crates/" + url.PathEscape(name) + "/reverse_dependencies?" + params.Encode()
+	var resp reverseDepsResp
+	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
+		return nil, err
+	}
+	rdeps := make([]ReverseDep, 0, len(resp.Dependencies))
+	for i, wd := range resp.Dependencies {
+		if limit > 0 && i >= limit {
+			break
+		}
+		rdeps = append(rdeps, wireReverseDep(wd, i+1))
+	}
+	return rdeps, nil
+}
+
 // Top returns the most downloaded crates on the given page (1-based).
 // limit clips the returned slice.
 func (c *Client) Top(ctx context.Context, page, limit int) ([]Crate, error) {
