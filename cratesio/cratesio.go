@@ -22,7 +22,7 @@ const defaultBase = "https://crates.io/api/v1"
 
 // DefaultUserAgent is the User-Agent sent on every request.
 // crates.io returns 403 if this header is absent or generic.
-const DefaultUserAgent = "crates-cli/dev (+https://github.com/tamnd/cratesio-cli)"
+const DefaultUserAgent = "cratesio-cli/0.1.0 (github.com/tamnd/cratesio-cli)"
 
 // ErrNotFound is returned when the API returns a 404 or an empty crate.
 var ErrNotFound = errors.New("not found")

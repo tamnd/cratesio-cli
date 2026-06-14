@@ -12,10 +12,10 @@ ARG TARGETPLATFORM
 
 # ca-certificates for HTTPS; tzdata for sane timestamps.
 RUN apk add --no-cache ca-certificates tzdata \
- && adduser -D -H -u 10001 crates
+ && adduser -D -H -u 10001 cratesio
 
-COPY $TARGETPLATFORM/crates /usr/bin/crates
+COPY $TARGETPLATFORM/cratesio /usr/bin/cratesio
 
-USER crates
+USER cratesio
 
-ENTRYPOINT ["/usr/bin/crates"]
+ENTRYPOINT ["/usr/bin/cratesio"]

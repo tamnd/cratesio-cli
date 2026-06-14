@@ -59,13 +59,13 @@ func Root() *cobra.Command {
 	app := &App{cfg: cratesio.DefaultConfig()}
 
 	root := &cobra.Command{
-		Use:   "crates",
+		Use:   "cratesio",
 		Short: "Browse the crates.io Rust package registry",
-		Long: `crates reads the crates.io Rust package registry through the public v1 API.
+		Long: `cratesio reads the crates.io Rust package registry through the public v1 API.
 No authentication or API key required. It returns records as table, JSON, JSONL,
 CSV, TSV, or URLs.
 
-crates is an independent tool and is not affiliated with the Rust Foundation or crates.io.`,
+cratesio is an independent tool and is not affiliated with the Rust Foundation or crates.io.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {

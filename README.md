@@ -1,45 +1,49 @@
-# crates
+# cratesio
 
 Browse the crates.io Rust package registry
 
-`crates` is a single pure-Go binary. It speaks to cratesio over plain
+`cratesio` is a single pure-Go binary. It speaks to crates.io over plain
 HTTPS, shapes the responses into clean records, and pipes into the rest of your
 tools. No API key, nothing to run alongside it.
 
 ## Install
 
 ```bash
-go install github.com/tamnd/cratesio-cli/cmd/crates@latest
+go install github.com/tamnd/cratesio-cli/cmd/cratesio@latest
 ```
 
 Or grab a prebuilt binary from the [releases](https://github.com/tamnd/cratesio-cli/releases), or run
 the container image:
 
 ```bash
-docker run --rm ghcr.io/tamnd/crates:latest --help
+docker run --rm ghcr.io/tamnd/cratesio:latest --help
 ```
 
 ## Usage
 
 ```bash
-crates --help
-crates version
+cratesio --help
+cratesio search tokio
+cratesio info serde
+cratesio versions serde --limit 10
+cratesio owners serde
+cratesio deps serde
+cratesio top
+cratesio categories
+cratesio keywords
 ```
-
-This is a fresh scaffold. The command tree starts with `version`; build out the
-real commands in `cli/` on top of the `cratesio` library package.
 
 ## Development
 
 ```
-cmd/crates/   thin main, wires cli.Root into fang
-cli/                 the cobra command tree
-cratesio/                the library: HTTP client and data models
-docs/                tago documentation site
+cmd/cratesio/  thin main, wires cli.Root into fang
+cli/           the cobra command tree
+cratesio/      the library: HTTP client and data models
+docs/          tago documentation site
 ```
 
 ```bash
-make build      # ./bin/crates
+make build      # ./bin/cratesio
 make test       # go test ./...
 make vet        # go vet ./...
 ```
@@ -51,7 +55,7 @@ archives, Linux packages, the multi-arch GHCR image, checksums, SBOMs, and a
 cosign signature:
 
 ```bash
-git tag v0.1.0
+git tag v0.1.1
 git push --tags
 ```
 

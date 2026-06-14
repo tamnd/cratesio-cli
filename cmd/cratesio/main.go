@@ -1,4 +1,4 @@
-// Command crates is a single-binary command line for cratesio.
+// Command cratesio is a single-binary command line for the crates.io registry.
 package main
 
 import (
