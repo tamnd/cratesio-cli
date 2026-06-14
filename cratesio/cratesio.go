@@ -1,8 +1,9 @@
-// Package cratesio is the library behind the crates command: the HTTP client,
-// request shaping, and the typed data models for crates.io.
+// Package cratesio is the library behind the cratesio command line:
+// the HTTP client, request shaping, and the typed data models for crates.io.
 //
-// The crates.io v1 API is public and requires no authentication, but it does
-// require a descriptive User-Agent header or it returns 403.
+// The crates.io v1 API is public and requires no authentication, but every
+// request MUST carry a descriptive User-Agent or the server returns 403.
+// Set it via Config.UserAgent or DefaultConfig(), which fills it in.
 package cratesio
 
 import (
@@ -13,69 +14,208 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"time"
 )
 
-const defaultBase = "https://crates.io/api/v1"
+// Host is the site this client talks to, and the host the URI driver claims.
+const Host = "crates.io"
 
-// DefaultUserAgent is the User-Agent sent on every request.
-// crates.io returns 403 if this header is absent or generic.
-const DefaultUserAgent = "cratesio-cli/0.1.0 (github.com/tamnd/cratesio-cli)"
+// baseURL is the root every request is built from.
+const baseURL = "https://" + Host + "/api/v1"
 
-// ErrNotFound is returned when the API returns a 404 or an empty crate.
+// ErrNotFound is returned when the API returns a 404 or an empty result.
 var ErrNotFound = errors.New("not found")
 
-// Config holds constructor parameters for a Client.
+// Config holds all tunable parameters for a Client.
 type Config struct {
 	UserAgent string
 	Rate      time.Duration
-	Retries   int
 	Timeout   time.Duration
+	Retries   int
 	BaseURL   string // override for tests
 }
 
-// DefaultConfig returns sensible defaults.
+// DefaultConfig returns a Config with sensible defaults.
+// UserAgent is required by crates.io; the default identifies this client.
 func DefaultConfig() Config {
 	return Config{
-		UserAgent: DefaultUserAgent,
+		UserAgent: "tamnd-cratesio-cli/0.1 tamnd87@gmail.com",
 		Rate:      300 * time.Millisecond,
-		Retries:   3,
 		Timeout:   30 * time.Second,
+		Retries:   3,
 	}
 }
 
 // Client talks to the crates.io v1 API.
 type Client struct {
-	httpClient *http.Client
-	userAgent  string
-	rate       time.Duration
-	retries    int
-	base       string
-	mu         sync.Mutex
-	last       time.Time
+	cfg  Config
+	http *http.Client
+	mu   sync.Mutex
+	last time.Time
 }
 
 // NewClient returns a Client configured from cfg.
 func NewClient(cfg Config) *Client {
-	base := cfg.BaseURL
-	if base == "" {
-		base = defaultBase
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = baseURL
 	}
 	return &Client{
-		httpClient: &http.Client{Timeout: cfg.Timeout},
-		userAgent:  cfg.UserAgent,
-		rate:       cfg.Rate,
-		retries:    cfg.Retries,
-		base:       base,
+		cfg:  cfg,
+		http: &http.Client{Timeout: cfg.Timeout},
 	}
 }
 
-// get fetches a URL with pacing and retries.
+// ─── output types ─────────────────────────────────────────────────────────────
+
+// Crate is the primary record for a crates.io package.
+type Crate struct {
+	ID              string `kit:"id" json:"id"`
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	Downloads       int64  `json:"downloads"`
+	RecentDownloads int64  `json:"recent_downloads"`
+	MaxVersion      string `json:"max_version"`
+	NewestVersion   string `json:"newest_version"`
+	Homepage        string `json:"homepage"`
+	Repository      string `json:"repository"`
+}
+
+// Version is a record for a single published version of a crate.
+type Version struct {
+	ID        int    `kit:"id" json:"id"`
+	CrateName string `json:"crate"`
+	Num       string `json:"num"`
+	Downloads int64  `json:"downloads"`
+	Yanked    bool   `json:"yanked"`
+	License   string `json:"license"`
+	CreatedAt string `json:"created_at"`
+}
+
+// Category is a record for a crates.io category.
+type Category struct {
+	ID          string `kit:"id" json:"id"`
+	Name        string `json:"category"`
+	CratesCount int    `json:"crates_cnt"`
+	Description string `json:"description"`
+}
+
+// ─── wire types ───────────────────────────────────────────────────────────────
+
+type searchResponse struct {
+	Crates []Crate `json:"crates"`
+	Meta   struct {
+		Total    int    `json:"total"`
+		NextPage string `json:"next_page"`
+	} `json:"meta"`
+}
+
+type crateResponse struct {
+	Crate    Crate     `json:"crate"`
+	Versions []Version `json:"versions"`
+}
+
+type versionsResponse struct {
+	Versions []Version `json:"versions"`
+}
+
+type categoriesResponse struct {
+	Categories []Category `json:"categories"`
+}
+
+// ─── client methods ───────────────────────────────────────────────────────────
+
+// SearchCrates searches crates.io for crates matching query.
+// limit controls the max results; capped at 100 per API page.
+func (c *Client) SearchCrates(ctx context.Context, query string, limit int) ([]Crate, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	pageSize := limit
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	params := url.Values{}
+	params.Set("q", query)
+	params.Set("per_page", fmt.Sprintf("%d", pageSize))
+	rawURL := c.cfg.BaseURL + "/crates?" + params.Encode()
+	var resp searchResponse
+	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
+		return nil, err
+	}
+	if limit < len(resp.Crates) {
+		resp.Crates = resp.Crates[:limit]
+	}
+	return resp.Crates, nil
+}
+
+// GetCrate fetches metadata for a single crate by name.
+func (c *Client) GetCrate(ctx context.Context, name string) (*Crate, error) {
+	rawURL := c.cfg.BaseURL + "/crates/" + url.PathEscape(name)
+	var resp crateResponse
+	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Crate.Name == "" {
+		return nil, ErrNotFound
+	}
+	return &resp.Crate, nil
+}
+
+// ListVersions lists all published versions of a crate, truncated to limit.
+func (c *Client) ListVersions(ctx context.Context, name string, limit int) ([]Version, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rawURL := c.cfg.BaseURL + "/crates/" + url.PathEscape(name) + "/versions"
+	var resp versionsResponse
+	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
+		return nil, err
+	}
+	if limit < len(resp.Versions) {
+		resp.Versions = resp.Versions[:limit]
+	}
+	return resp.Versions, nil
+}
+
+// ListCategories lists crates.io categories, limited to limit results.
+func (c *Client) ListCategories(ctx context.Context, limit int) ([]Category, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	pageSize := limit
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	params := url.Values{}
+	params.Set("per_page", fmt.Sprintf("%d", pageSize))
+	rawURL := c.cfg.BaseURL + "/categories?" + params.Encode()
+	var resp categoriesResponse
+	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
+		return nil, err
+	}
+	if limit < len(resp.Categories) {
+		resp.Categories = resp.Categories[:limit]
+	}
+	return resp.Categories, nil
+}
+
+// ─── internal helpers ─────────────────────────────────────────────────────────
+
+func (c *Client) getJSON(ctx context.Context, rawURL string, v any) error {
+	body, err := c.get(ctx, rawURL)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(body, v); err != nil {
+		return fmt.Errorf("decode %s: %w", rawURL, err)
+	}
+	return nil
+}
+
 func (c *Client) get(ctx context.Context, rawURL string) ([]byte, error) {
 	var lastErr error
-	for attempt := 0; attempt <= c.retries; attempt++ {
+	for attempt := 0; attempt <= c.cfg.Retries; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
@@ -101,10 +241,10 @@ func (c *Client) do(ctx context.Context, rawURL string) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("User-Agent", c.cfg.UserAgent)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, true, err
 	}
@@ -129,10 +269,10 @@ func (c *Client) do(ctx context.Context, rawURL string) ([]byte, bool, error) {
 func (c *Client) pace() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.rate <= 0 {
+	if c.cfg.Rate <= 0 {
 		return
 	}
-	if wait := c.rate - time.Since(c.last); wait > 0 {
+	if wait := c.cfg.Rate - time.Since(c.last); wait > 0 {
 		time.Sleep(wait)
 	}
 	c.last = time.Now()
@@ -144,197 +284,4 @@ func backoff(attempt int) time.Duration {
 		d = 5 * time.Second
 	}
 	return d
-}
-
-// getJSON fetches and JSON-decodes into v.
-func (c *Client) getJSON(ctx context.Context, rawURL string, v any) error {
-	body, err := c.get(ctx, rawURL)
-	if err != nil {
-		return err
-	}
-	trimmed := strings.TrimSpace(string(body))
-	if trimmed == "null" {
-		return ErrNotFound
-	}
-	if err := json.Unmarshal(body, v); err != nil {
-		return fmt.Errorf("decode %s: %w", rawURL, err)
-	}
-	return nil
-}
-
-// ─── API methods ─────────────────────────────────────────────────────────────
-
-// Search searches crates.io for crates matching query.
-// sort is one of: downloads, alpha, new_crates, new_versions, recent_downloads.
-// limit controls the max results returned.
-func (c *Client) Search(ctx context.Context, query, sort string, limit int) ([]Crate, error) {
-	if limit <= 0 {
-		limit = 20
-	}
-	pageSize := limit
-	if pageSize > 100 {
-		pageSize = 100
-	}
-	params := url.Values{}
-	params.Set("q", query)
-	params.Set("sort", sort)
-	params.Set("per_page", fmt.Sprintf("%d", pageSize))
-	params.Set("page", "1")
-
-	rawURL := c.base + "/crates?" + params.Encode()
-	var resp searchResp
-	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
-		return nil, err
-	}
-	crates := make([]Crate, 0, len(resp.Crates))
-	for i, wc := range resp.Crates {
-		if i >= limit {
-			break
-		}
-		crates = append(crates, wireCrateToCrate(wc, i+1))
-	}
-	return crates, nil
-}
-
-// Crate fetches metadata for a single crate by name.
-func (c *Client) Crate(ctx context.Context, name string) (Crate, error) {
-	rawURL := c.base + "/crates/" + url.PathEscape(name)
-	var resp crateResp
-	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
-		return Crate{}, err
-	}
-	if resp.Crate.Name == "" {
-		return Crate{}, ErrNotFound
-	}
-	return wireCrateToCrate(resp.Crate, 0), nil
-}
-
-// Versions lists all published versions of a crate (newest first).
-func (c *Client) Versions(ctx context.Context, name string) ([]Version, error) {
-	rawURL := c.base + "/crates/" + url.PathEscape(name) + "/versions"
-	var resp versionsResp
-	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
-		return nil, err
-	}
-	versions := make([]Version, len(resp.Versions))
-	for i, wv := range resp.Versions {
-		versions[i] = wireVersionToVersion(wv)
-	}
-	return versions, nil
-}
-
-// Owners lists the owners of a crate (users and teams).
-func (c *Client) Owners(ctx context.Context, name string) ([]Owner, error) {
-	rawURL := c.base + "/crates/" + url.PathEscape(name) + "/owners"
-	var resp ownersResp
-	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
-		return nil, err
-	}
-	owners := make([]Owner, len(resp.Users))
-	for i, wo := range resp.Users {
-		owners[i] = wireOwnerToOwner(wo)
-	}
-	return owners, nil
-}
-
-// Deps returns the dependencies of a crate's latest version.
-// It first resolves the max_version via a Crate call, then fetches dependencies.
-func (c *Client) Deps(ctx context.Context, name string) ([]Dep, error) {
-	cr, err := c.Crate(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-	version := cr.MaxVersion
-	rawURL := c.base + "/crates/" + url.PathEscape(name) + "/" + url.PathEscape(version) + "/dependencies"
-	var resp depsResp
-	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
-		return nil, err
-	}
-	deps := make([]Dep, len(resp.Dependencies))
-	for i, wd := range resp.Dependencies {
-		deps[i] = wireDepToDep(wd)
-	}
-	return deps, nil
-}
-
-// ReverseDeps returns crates that depend on the given crate (reverse dependencies).
-// limit controls the max results; 0 uses the API default (100).
-func (c *Client) ReverseDeps(ctx context.Context, name string, limit int) ([]ReverseDep, error) {
-	params := url.Values{}
-	pageSize := limit
-	if pageSize <= 0 || pageSize > 100 {
-		pageSize = 100
-	}
-	params.Set("per_page", fmt.Sprintf("%d", pageSize))
-	rawURL := c.base + "/crates/" + url.PathEscape(name) + "/reverse_dependencies?" + params.Encode()
-	var resp reverseDepsResp
-	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
-		return nil, err
-	}
-	rdeps := make([]ReverseDep, 0, len(resp.Dependencies))
-	for i, wd := range resp.Dependencies {
-		if limit > 0 && i >= limit {
-			break
-		}
-		rdeps = append(rdeps, wireReverseDep(wd, i+1))
-	}
-	return rdeps, nil
-}
-
-// Top returns the most downloaded crates on the given page (1-based).
-// limit clips the returned slice.
-func (c *Client) Top(ctx context.Context, page, limit int) ([]Crate, error) {
-	if page <= 0 {
-		page = 1
-	}
-	if limit <= 0 {
-		limit = 25
-	}
-	params := url.Values{}
-	params.Set("per_page", "100")
-	params.Set("sort", "downloads")
-	params.Set("page", fmt.Sprintf("%d", page))
-
-	rawURL := c.base + "/crates?" + params.Encode()
-	var resp searchResp
-	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
-		return nil, err
-	}
-	rankOffset := (page - 1) * 100
-	crates := make([]Crate, 0, len(resp.Crates))
-	for i, wc := range resp.Crates {
-		if i >= limit {
-			break
-		}
-		crates = append(crates, wireCrateToCrate(wc, rankOffset+i+1))
-	}
-	return crates, nil
-}
-
-// Categories lists all crates.io categories.
-func (c *Client) Categories(ctx context.Context) ([]Category, error) {
-	rawURL := c.base + "/categories?per_page=100"
-	var resp categoriesResp
-	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
-		return nil, err
-	}
-	cats := make([]Category, len(resp.Categories))
-	for i, wc := range resp.Categories {
-		cats[i] = wireCategoryToCategory(wc)
-	}
-	return cats, nil
-}
-
-// Keywords lists popular keywords on crates.io.
-func (c *Client) Keywords(ctx context.Context) ([]Keyword, error) {
-	rawURL := c.base + "/keywords?per_page=100"
-	var resp keywordsResp
-	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
-		return nil, err
-	}
-	kws := make([]Keyword, len(resp.Keywords))
-	for i, wk := range resp.Keywords {
-		kws[i] = wireKeywordToKeyword(wk)
-	}
-	return kws, nil
 }
