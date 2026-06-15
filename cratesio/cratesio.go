@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -83,13 +84,32 @@ type Crate struct {
 
 // Version is a record for a single published version of a crate.
 type Version struct {
-	ID        int    `kit:"id" json:"id"`
-	CrateName string `json:"crate"`
-	Num       string `json:"num"`
-	Downloads int64  `json:"downloads"`
-	Yanked    bool   `json:"yanked"`
-	License   string `json:"license"`
-	CreatedAt string `json:"created_at"`
+	ID          int    `kit:"id" json:"id"`
+	CrateName   string `json:"crate"`
+	Num         string `json:"num"`
+	Downloads   int64  `json:"downloads"`
+	Yanked      bool   `json:"yanked"`
+	License     string `json:"license"`
+	RustVersion string `json:"rust_version"`
+	PublishedBy string `json:"published_by"`
+	CreatedAt   string `json:"created_at"`
+}
+
+// Owner is a crate owner (user or team).
+type Owner struct {
+	Login string `kit:"id" json:"login"`
+	Name  string `json:"name"`
+	Kind  string `json:"kind"`
+	URL   string `json:"url"`
+}
+
+// Dep is a dependency of a specific crate version.
+type Dep struct {
+	Name     string `json:"name"`
+	Req      string `json:"req"`
+	Kind     string `json:"kind"`
+	Optional bool   `json:"optional"`
+	Features string `json:"features"`
 }
 
 // Category is a record for a crates.io category.
@@ -98,6 +118,13 @@ type Category struct {
 	Name        string `json:"category"`
 	CratesCount int    `json:"crates_cnt"`
 	Description string `json:"description"`
+}
+
+// Keyword is a keyword tag on crates.io.
+type Keyword struct {
+	ID          string `kit:"id" json:"id"`
+	Keyword     string `json:"keyword"`
+	CratesCount int    `json:"crates_cnt"`
 }
 
 // ─── wire types ───────────────────────────────────────────────────────────────
@@ -111,16 +138,79 @@ type searchResponse struct {
 }
 
 type crateResponse struct {
-	Crate    Crate     `json:"crate"`
-	Versions []Version `json:"versions"`
+	Crate    Crate        `json:"crate"`
+	Versions []wireVersion `json:"versions"`
 }
 
 type versionsResponse struct {
-	Versions []Version `json:"versions"`
+	Versions []wireVersion `json:"versions"`
+}
+
+type ownersResponse struct {
+	Users []Owner `json:"users"`
+}
+
+type depsResponse struct {
+	Dependencies []wireDep `json:"dependencies"`
 }
 
 type categoriesResponse struct {
 	Categories []Category `json:"categories"`
+}
+
+type keywordsResponse struct {
+	Keywords []Keyword `json:"keywords"`
+}
+
+// wireVersion is the raw API shape for a version (published_by is an object).
+type wireVersion struct {
+	ID          int    `json:"id"`
+	Num         string `json:"num"`
+	Downloads   int64  `json:"downloads"`
+	CreatedAt   string `json:"created_at"`
+	Yanked      bool   `json:"yanked"`
+	License     string `json:"license"`
+	RustVersion string `json:"rust_version"`
+	PublishedBy struct {
+		Login string `json:"login"`
+	} `json:"published_by"`
+}
+
+func (w wireVersion) toVersion(crateName string) Version {
+	pub := w.CreatedAt
+	if len(pub) >= 10 {
+		pub = pub[:10]
+	}
+	return Version{
+		ID:          w.ID,
+		CrateName:   crateName,
+		Num:         w.Num,
+		Downloads:   w.Downloads,
+		Yanked:      w.Yanked,
+		License:     w.License,
+		RustVersion: w.RustVersion,
+		PublishedBy: w.PublishedBy.Login,
+		CreatedAt:   pub,
+	}
+}
+
+// wireDep is the raw API shape for a dependency.
+type wireDep struct {
+	CrateID  string   `json:"crate_id"`
+	Req      string   `json:"req"`
+	Kind     string   `json:"kind"`
+	Optional bool     `json:"optional"`
+	Features []string `json:"features"`
+}
+
+func (w wireDep) toDep() Dep {
+	return Dep{
+		Name:     w.CrateID,
+		Req:      w.Req,
+		Kind:     w.Kind,
+		Optional: w.Optional,
+		Features: strings.Join(w.Features, ";"),
+	}
 }
 
 // ─── client methods ───────────────────────────────────────────────────────────
@@ -172,10 +262,73 @@ func (c *Client) ListVersions(ctx context.Context, name string, limit int) ([]Ve
 	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
 		return nil, err
 	}
-	if limit < len(resp.Versions) {
-		resp.Versions = resp.Versions[:limit]
+	wires := resp.Versions
+	if limit < len(wires) {
+		wires = wires[:limit]
 	}
-	return resp.Versions, nil
+	out := make([]Version, len(wires))
+	for i, w := range wires {
+		out[i] = w.toVersion(name)
+	}
+	return out, nil
+}
+
+// Owners lists the owners (users and teams) of a crate.
+func (c *Client) Owners(ctx context.Context, name string) ([]Owner, error) {
+	rawURL := c.cfg.BaseURL + "/crates/" + url.PathEscape(name) + "/owners"
+	var resp ownersResponse
+	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Users, nil
+}
+
+// Deps lists the dependencies of the latest version of a crate.
+// It makes two sequential requests: one to resolve max_version, one for deps.
+func (c *Client) Deps(ctx context.Context, name string) ([]Dep, error) {
+	cr, err := c.GetCrate(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	version := cr.MaxVersion
+	if version == "" {
+		return nil, ErrNotFound
+	}
+	rawURL := c.cfg.BaseURL + "/crates/" + url.PathEscape(name) + "/" + url.PathEscape(version) + "/dependencies"
+	var resp depsResponse
+	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]Dep, len(resp.Dependencies))
+	for i, w := range resp.Dependencies {
+		out[i] = w.toDep()
+	}
+	return out, nil
+}
+
+// Top returns the top crates by all-time download count.
+// page is 1-based; limit caps the result slice.
+func (c *Client) Top(ctx context.Context, page, limit int) ([]Crate, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 25
+	}
+	params := url.Values{}
+	params.Set("sort", "downloads")
+	params.Set("per_page", "100")
+	params.Set("page", fmt.Sprintf("%d", page))
+	rawURL := c.cfg.BaseURL + "/crates?" + params.Encode()
+	var resp searchResponse
+	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
+		return nil, err
+	}
+	crates := resp.Crates
+	if limit < len(crates) {
+		crates = crates[:limit]
+	}
+	return crates, nil
 }
 
 // ListCategories lists crates.io categories, limited to limit results.
@@ -198,6 +351,29 @@ func (c *Client) ListCategories(ctx context.Context, limit int) ([]Category, err
 		resp.Categories = resp.Categories[:limit]
 	}
 	return resp.Categories, nil
+}
+
+// ListKeywords lists crates.io keywords sorted by crate count.
+func (c *Client) ListKeywords(ctx context.Context, limit int) ([]Keyword, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	pageSize := limit
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	params := url.Values{}
+	params.Set("per_page", fmt.Sprintf("%d", pageSize))
+	params.Set("sort", "crates")
+	rawURL := c.cfg.BaseURL + "/keywords?" + params.Encode()
+	var resp keywordsResponse
+	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
+		return nil, err
+	}
+	if limit < len(resp.Keywords) {
+		resp.Keywords = resp.Keywords[:limit]
+	}
+	return resp.Keywords, nil
 }
 
 // ─── internal helpers ─────────────────────────────────────────────────────────

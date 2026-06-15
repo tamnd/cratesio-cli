@@ -30,13 +30,13 @@ func (Domain) Info() kit.DomainInfo {
 		Scheme: "cratesio",
 		Hosts:  []string{Host},
 		Identity: kit.Identity{
-			Binary: "cratesio",
+			Binary: "crates",
 			Short:  "Browse the crates.io Rust package registry",
-			Long: `cratesio reads the crates.io Rust package registry through the public v1 API.
+			Long: `crates reads the crates.io Rust package registry through the public v1 API.
 No authentication or API key required. Every request carries a descriptive
 User-Agent so the server knows who is asking.
 
-cratesio is an independent tool and is not affiliated with the Rust Foundation
+crates is an independent tool and is not affiliated with the Rust Foundation
 or crates.io.`,
 			Site: Host,
 			Repo: "https://github.com/tamnd/cratesio-cli",
@@ -56,13 +56,13 @@ func (Domain) Register(app *kit.App) {
 	}, searchCrates)
 
 	kit.Handle(app, kit.OpMeta{
-		Name:    "crate",
-		Group:   "read",
-		Single:  true,
-		Summary: "Get crate details by name",
-		URIType: "crate",
+		Name:     "crate",
+		Group:    "read",
+		Single:   true,
+		Summary:  "Get crate details by name",
+		URIType:  "crate",
 		Resolver: true,
-		Args:    []kit.Arg{{Name: "name", Help: "crate name (e.g. tokio, serde)"}},
+		Args:     []kit.Arg{{Name: "name", Help: "crate name (e.g. tokio, serde)"}},
 	}, getCrate)
 
 	kit.Handle(app, kit.OpMeta{
@@ -73,10 +73,36 @@ func (Domain) Register(app *kit.App) {
 	}, listVersions)
 
 	kit.Handle(app, kit.OpMeta{
+		Name:    "owners",
+		Group:   "read",
+		Summary: "List owners of a crate",
+		Args:    []kit.Arg{{Name: "name", Help: "crate name"}},
+	}, listOwners)
+
+	kit.Handle(app, kit.OpMeta{
+		Name:    "deps",
+		Group:   "read",
+		Summary: "List dependencies of the latest version of a crate",
+		Args:    []kit.Arg{{Name: "name", Help: "crate name"}},
+	}, listDeps)
+
+	kit.Handle(app, kit.OpMeta{
+		Name:    "top",
+		Group:   "read",
+		Summary: "List top crates by all-time download count",
+	}, listTop)
+
+	kit.Handle(app, kit.OpMeta{
 		Name:    "categories",
 		Group:   "read",
 		Summary: "List crates.io categories",
 	}, listCategories)
+
+	kit.Handle(app, kit.OpMeta{
+		Name:    "keywords",
+		Group:   "read",
+		Summary: "List popular crates.io keywords",
+	}, listKeywords)
 }
 
 // newClient builds the client from the host-resolved config.
@@ -116,8 +142,29 @@ type versionsInput struct {
 	Client *Client `kit:"inject"`
 }
 
+type ownersInput struct {
+	Name   string  `kit:"arg" help:"crate name"`
+	Client *Client `kit:"inject"`
+}
+
+type depsInput struct {
+	Name   string  `kit:"arg" help:"crate name"`
+	Client *Client `kit:"inject"`
+}
+
+type topInput struct {
+	Page   int     `kit:"flag" help:"page number (1-based)" default:"1"`
+	Limit  int     `kit:"flag,inherit" help:"max results" default:"25"`
+	Client *Client `kit:"inject"`
+}
+
 type categoriesInput struct {
 	Limit  int     `kit:"flag,inherit" help:"max categories" default:"20"`
+	Client *Client `kit:"inject"`
+}
+
+type keywordsInput struct {
+	Limit  int     `kit:"flag,inherit" help:"max keywords" default:"50"`
 	Client *Client `kit:"inject"`
 }
 
@@ -165,6 +212,49 @@ func listVersions(ctx context.Context, in versionsInput, emit func(Version) erro
 	return nil
 }
 
+func listOwners(ctx context.Context, in ownersInput, emit func(Owner) error) error {
+	owners, err := in.Client.Owners(ctx, in.Name)
+	if err != nil {
+		return mapErr(err)
+	}
+	for _, o := range owners {
+		if err := emit(o); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func listDeps(ctx context.Context, in depsInput, emit func(Dep) error) error {
+	deps, err := in.Client.Deps(ctx, in.Name)
+	if err != nil {
+		return mapErr(err)
+	}
+	for _, d := range deps {
+		if err := emit(d); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func listTop(ctx context.Context, in topInput, emit func(Crate) error) error {
+	limit := in.Limit
+	if limit <= 0 {
+		limit = 25
+	}
+	crates, err := in.Client.Top(ctx, in.Page, limit)
+	if err != nil {
+		return mapErr(err)
+	}
+	for _, cr := range crates {
+		if err := emit(cr); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func listCategories(ctx context.Context, in categoriesInput, emit func(Category) error) error {
 	limit := in.Limit
 	if limit <= 0 {
@@ -176,6 +266,23 @@ func listCategories(ctx context.Context, in categoriesInput, emit func(Category)
 	}
 	for _, cat := range cats {
 		if err := emit(cat); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func listKeywords(ctx context.Context, in keywordsInput, emit func(Keyword) error) error {
+	limit := in.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	kws, err := in.Client.ListKeywords(ctx, limit)
+	if err != nil {
+		return mapErr(err)
+	}
+	for _, kw := range kws {
+		if err := emit(kw); err != nil {
 			return err
 		}
 	}
