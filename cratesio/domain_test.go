@@ -18,8 +18,8 @@ func TestDomainInfo(t *testing.T) {
 	if len(info.Hosts) == 0 || info.Hosts[0] != Host {
 		t.Errorf("Hosts = %v, want [%s]", info.Hosts, Host)
 	}
-	if info.Identity.Binary != "cratesio" {
-		t.Errorf("Identity.Binary = %q, want cratesio", info.Identity.Binary)
+	if info.Identity.Binary != "crates" {
+		t.Errorf("Identity.Binary = %q, want crates", info.Identity.Binary)
 	}
 }
 

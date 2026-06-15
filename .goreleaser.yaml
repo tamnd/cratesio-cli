@@ -9,16 +9,16 @@
 # image; each manager lights up the moment its repository and token exist.
 version: 2
 
-project_name: cratesio
+project_name: crates
 
 before:
   hooks:
     - go mod download
 
 builds:
-  - id: cratesio
-    binary: cratesio
-    main: ./cmd/cratesio
+  - id: crates
+    binary: crates
+    main: ./cmd/crates
     env:
       - CGO_ENABLED=0
     flags:
@@ -43,7 +43,7 @@ builds:
 
 archives:
   - id: default
-    name_template: "cratesio_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
+    name_template: "crates_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
     format_overrides:
       - goos: windows
         formats: [zip]
@@ -53,7 +53,7 @@ archives:
 
 nfpms:
   - id: linux-packages
-    package_name: cratesio
+    package_name: crates
     file_name_template: "{{ .ConventionalFileName }}"
     vendor: tamnd
     homepage: https://github.com/tamnd/cratesio-cli
@@ -68,11 +68,11 @@ nfpms:
     section: utils
     contents:
       - src: ./LICENSE
-        dst: /usr/share/doc/cratesio/LICENSE
+        dst: /usr/share/doc/crates/LICENSE
 
 dockers_v2:
   - images:
-      - ghcr.io/tamnd/cratesio
+      - ghcr.io/tamnd/crates
     tags:
       - "{{ .Version }}"
       - latest
@@ -90,7 +90,7 @@ dockers_v2:
       org.opencontainers.image.licenses: "Apache-2.0"
 
 homebrew_casks:
-  - name: cratesio
+  - name: crates
     repository:
       owner: tamnd
       name: homebrew-tap
